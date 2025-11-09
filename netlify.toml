@@ -1,0 +1,10 @@
+[build]
+  # The directory Netlify serves the static files from (assuming index.html is in the root)
+  publish = "."
+  
+  # Tell Netlify where your Python serverless functions are located
+  functions = "netlify/functions"
+
+[build.environment]
+  # Specify Python version for the functions runtime
+  PYTHON_VERSION = "3.10"
