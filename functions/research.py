@@ -4,7 +4,7 @@ import requests
 
 # --- 1. CONFIGURATION ---
 
-# The API key MUST be set as an environment variable in Netlify.
+# IMPORTANT: The GEMINI_API_KEY must be set as an environment variable in your Netlify dashboard.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 
 MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
@@ -52,14 +52,101 @@ RESPONSE_SCHEMA = {
                 "properties": {
                     "name": {"type": "STRING", "description": "The name of the concept or API (e.g., Function Calling, Latent Space Image Generation)."},
                     "summary": {"type": "STRING", "description": "A concise 1-2 sentence summary of how this concept can be applied to the website builder."}
-                },
-                "required": ["name", "summary"]
+                }
             }
         }
     },
     "required": ["designPrinciples", "uiFrameworks", "aiApiConcepts"]
 }
 
+
+# --- 3. NETLIFY HANDLER FUNCTION ---
+
+def handler(event, context):
+    """
+    The entry point for the Netlify function. 
+    It receives the request event and returns the response.
+    """
+    
+    # 1. API Key Check
+    if not GEMINI_API_KEY:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Server API Key is missing. Set GEMINI_API_KEY environment variable in Netlify."})
+        }
+
+    try:
+        # 2. Input Validation (Parsing the JSON body from the event)
+        if event.get('body'):
+            data = json.loads(event['body'])
+            user_prompt = data.get('prompt')
+        else:
+            return {
+                "statusCode": 400, 
+                "body": json.dumps({"error": "Missing prompt in request data."})
+            }
+
+        # 3. Construct Gemini Payload
+        payload = {
+            "contents": [{"parts": [{"text": user_prompt}]}],
+            "tools": [{"google_search": {} }], # Enable Google Search
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": RESPONSE_SCHEMA
+            }
+        }
+
+        # 4. Call Gemini API
+        response = requests.post(
+            API_URL, 
+            headers={'Content-Type': 'application/json'}, 
+            data=json.dumps(payload),
+            timeout=30
+        )
+        # Raises an exception for bad status codes (4xx or 5xx)
+        response.raise_for_status() 
+        
+        # 5. Extract and Process Response
+        result = response.json()
+        candidate = result.get('candidates', [{}])[0]
+
+        if not candidate:
+            return {"statusCode": 500, "body": json.dumps({"error": "Gemini API returned an empty candidate list."})}
+
+        json_text = candidate.get('content', {}).get('parts', [{}])[0].get('text')
+        grounding_metadata = candidate.get('groundingMetadata', {})
+        
+        if not json_text:
+            return {"statusCode": 500, "body": json.dumps({"error": "Gemini API failed to return structured JSON content."})}
+        
+        # The AI returns JSON as a string, so we must parse it
+        research_data = json.loads(json_text)
+
+        # Extract citations/sources
+        sources = []
+        if grounding_metadata and grounding_metadata.get('groundingAttributions'):
+            for attribution in grounding_metadata['groundingAttributions']:
+                web = attribution.get('web')
+                if web and web.get('uri'):
+                    sources.append({
+                        "uri": web['uri'],
+                        "title": web.get('title', 'No Title Available')
+                    })
+
+        # 6. Return the consolidated data to the frontend
+        return {
+            "statusCode": 200,
+            "headers": { 'Content-Type': 'application/json' },
+            "body": json.dumps({
+                "research": research_data,
+                "sources": sources
+            })
+        }
+
+    except Exception as e:
+        # Catch any errors during execution (network, parsing, etc.)
+        return {"statusCode": 500, "body": json.dumps({"error": f"An unexpected server error occurred: {str(e)}", "details": str(e)})}
 
 # --- 3. NETLIFY HANDLER FUNCTION ---
 
