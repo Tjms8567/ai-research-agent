@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Research Agent - Netlify Serverless</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9fb; }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-10">
+            <div class="flex items-center justify-center text-indigo-600 mb-2">
+                <i data-lucide="zap" class="w-8 h-8 mr-2"></i>
+                <h1 class="text-3xl font-extrabold text-gray-800">AI Research Agent (Netlify Deployed)</h1>
+            </div>
+            <p class="text-lg text-gray-500">
+                The secure serverless function handles the Gemini API call and returns structured, cited research.
+            </p>
+        </header>
+
+        <div class="bg-white p-6 md:p-8 rounded-xl shadow-2xl border border-gray-100">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">What website are you building?</h2>
+            <div class="flex flex-col space-y-4">
+                <textarea
+                    id="userPrompt"
+                    rows="4"
+                    class="w-full p-4 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 resize-none"
+                    placeholder="E.g., An AI-driven recipe generator with a focus on dark-mode design and fast load times."
+                >A modern, interactive documentation platform similar to Next.js docs, but driven by an AI content generation model.</textarea>
+
+                <button
+                    id="generateButton"
+                    class="w-full md:w-auto self-end px-6 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition duration-200 shadow-md flex items-center justify-center disabled:opacity-50"
+                    onclick="handleGenerate()"
+                >
+                    <i data-lucide="loader-2" class="w-5 h-5 mr-2 hidden animate-spin" id="loadingIcon"></i>
+                    <i data-lucide="search" class="w-5 h-5 mr-2" id="searchIcon"></i>
+                    <span>Start Research & Collect Resources</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="resultsContainer" class="mt-10 hidden">
+            <h2 class="text-2xl font-bold mb-6 text-gray-800 border-b pb-2">Research Findings</h2>
+            
+            <div id="sourcesBox" class="bg-yellow-50 border border-yellow-200 p-4 rounded-lg mb-6 shadow-inner hidden">
+                <h3 class="text-lg font-medium text-yellow-800 flex items-center mb-2">
+                    <i data-lucide="link" class="w-5 h-5 mr-2"></i>
+                    Cited Sources
+                </h3>
+                <div id="sourceList" class="text-sm text-yellow-700 space-y-1">
+                    </div>
+            </div>
+
+            <div id="contentArea" class="space-y-8">
+                </div>
+        </div>
+        
+        <div id="errorMessage" class="mt-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg hidden">
+            </div>
+    </div>
+
+    <script>
+        function renderCategory(title, data, iconName) {
+            let itemsHtml = data.map(item => `
+                <div class="p-5 bg-gray-50 rounded-xl border border-gray-200">
+                    <h4 class="text-lg font-semibold text-indigo-700">${item.name}</h4>
+                    <p class="text-gray-600 mt-1">${item.summary}</p>
+                </div>
+            `).join('');
+
+            return `
+                <section>
+                    <h3 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                        <i data-lucide="${iconName}" class="w-5 h-5 mr-2 text-indigo-500"></i>
+                        ${title}
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        ${itemsHtml}
+                    </div>
+                </section>
+            `;
+        }
+
+        function renderSources(sources) {
+            const sourceList = document.getElementById('sourceList');
+            const sourcesBox = document.getElementById('sourcesBox');
+            sourceList.innerHTML = '';
+            
+            if (sources.length === 0) {
+                sourcesBox.classList.add('hidden');
+                return;
+            }
+
+            sourcesBox.classList.remove('hidden');
+
+            sources.forEach((source, index) => {
+                const sourceElement = document.createElement('div');
+                sourceElement.innerHTML = `
+                    <a href="${source.uri}" target="_blank" rel="noopener noreferrer" class="hover:underline text-indigo-600 font-medium">
+                        [${index + 1}] ${source.title || 'Source Link'}
+                    </a>
+                `;
+                sourceList.appendChild(sourceElement);
+            });
+        }
+
+        window.handleGenerate = async function() {
+            const userPrompt = document.getElementById('userPrompt').value;
+            const generateButton = document.getElementById('generateButton');
+            const loadingIcon = document.getElementById('loadingIcon');
+            const searchIcon = document.getElementById('searchIcon');
+            const resultsContainer = document.getElementById('resultsContainer');
+            const contentArea = document.getElementById('contentArea');
+            const errorMessage = document.getElementById('errorMessage');
+
+            if (!userPrompt.trim()) {
+                errorMessage.textContent = "Please enter a prompt to start the research.";
+                errorMessage.classList.remove('hidden');
+                return;
+            }
+
+            resultsContainer.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            contentArea.innerHTML = '';
+
+            generateButton.disabled = true;
+            generateButton.classList.add('bg-gray-400');
+            generateButton.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+            loadingIcon.classList.remove('hidden');
+            searchIcon.classList.add('hidden');
+            generateButton.querySelector('span').textContent = 'Researching...';
+
+            try {
+                // *** IMPORTANT: Targets the Netlify function endpoint ***
+                const response = await fetch('/netlify/functions/research', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: userPrompt })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Serverless function returned an error.');
+                }
+                
+                const researchData = data.research;
+                const sources = data.sources;
+
+                contentArea.innerHTML = 
+                    renderCategory('AI API Concepts & Integration', researchData.aiApiConcepts, 'brain-circuit') +
+                    renderCategory('UI Frameworks & Component Libraries', researchData.uiFrameworks, 'layout-list') +
+                    renderCategory('Key Design Principles & Patterns', researchData.designPrinciples, 'palette');
+
+                renderSources(sources);
+
+                resultsContainer.classList.remove('hidden');
+                lucide.createIcons(); 
+
+            } catch (error) {
+                console.error("Fetch or Parsing Error:", error);
+                errorMessage.textContent = `Research failed: ${error.message}. Please check the browser console and Netlify function logs for details.`;
+                errorMessage.classList.remove('hidden');
+            } finally {
+                generateButton.disabled = false;
+                generateButton.classList.remove('bg-gray-400');
+                generateButton.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                loadingIcon.classList.add('hidden');
+                searchIcon.classList.remove('hidden');
+                generateButton.querySelector('span').textContent = 'Start Research & Collect Resources';
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+             lucide.createIcons(); 
+        });
+    </script>
+</body>
+</html>
+```eof
+
+---
+
+### 2. `requirements.txt` (Dependencies)
+
+This simple file tells Netlify's build environment to install the `requests` library, which your Python code uses to talk to the Gemini API.
+
+```markdown:Python Dependencies:requirements.txt
+requests
+```eof
+
+---
+
+### 3. `netlify.toml` (Configuration)
+
+This configures the Netlify build system, pointing it to your static files and your serverless functions.
+
+```markdown:Netlify Configuration:netlify.toml
+[build]
+  # The directory Netlify serves the static files from (index.html)
+  publish = "."
+  # Tell Netlify where your functions are located
+  functions = "netlify/functions"
+
+[build.environment]
+  # Specify Python version for the functions runtime
+  PYTHON_VERSION = "3.10" 
+```eof
+
+---
+
+### 4. `research.py` (Backend Logic)
+
+This is the Python code that lives inside the functions folder (`netlify/functions/`). It must contain the required `handler` function that Netlify executes.
+
+```python:Netlify Function Backend:netlify/functions/research.py
+import os
+import json
+import requests
+
+# --- 1. CONFIGURATION ---
+
+# Key is read securely from Netlify Environment Variables
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+
+MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
+API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GEMINI_API_KEY}"
+
+# --- 2. AGENT DEFINITIONS ---
+SYSTEM_PROMPT = """
+You are a Senior UI/UX and AI Research Analyst focused on modern web application development. Your task is to perform web search using the provided tools and collect high-quality, up-to-date resources for building an AI-powered website builder with exceptional UI/UX, similar to lovable.dev.
+Analyze the user's request and provide the most relevant and powerful technologies and concepts. Your output MUST strictly adhere to the provided JSON schema. Do not include any introductory or concluding text outside of the JSON block.
+Ensure all entries are well-researched, current, and directly relate to building a modern, performant, and user-friendly web application.
+"""
+
+RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "designPrinciples": {
+            "type": "ARRAY",
+            "description": "Key UI/UX design philosophies, methodologies, or libraries relevant to modern AI builders.",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "name": {"type": "STRING", "description": "The name of the principle or library (e.g., Atomic Design, Shadcn UI)."},
+                    "summary": {"type": "STRING", "description": "A concise 1-2 sentence summary of why this resource is valuable for the project."}
+                },
+                "required": ["name", "summary"]
+            }
+        },
+        "uiFrameworks": {
+            "type": "ARRAY",
+            "description": "Recommended modern component libraries, styling utilities, or frameworks for rapid UI development.",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "name": {"type": "STRING", "description": "The name of the framework or tool (e.g., React, Svelte, Tailwind CSS)."},
+                    "summary": {"type": "STRING", "description": "A concise 1-2 sentence summary of why this resource is valuable for the project."}
+                },
+                "required": ["name", "summary"]
+            }
+        },
+        "aiApiConcepts": {
+            "type": "ARRAY",
+            "description": "Concepts or specific API use cases for integrating the AI model (Gemini) into the builder workflow.",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "name": {"type": "STRING", "description": "The name of the concept or API (e.g., Function Calling, Latent Space Image Generation)."},
+                    "summary": {"type": "STRING", "description": "A concise 1-2 sentence summary of how this concept can be applied to the website builder."}
+                },
+                "required": ["name", "summary"]
+            }
+        }
+    },
+    "required": ["designPrinciples", "uiFrameworks", "aiApiConcepts"]
+}
+
+
+# --- 3. NETLIFY HANDLER FUNCTION ---
+
+def handler(event, context):
+    """The entry point for the Netlify function."""
+    
+    # 1. API Key Check
+    if not GEMINI_API_KEY:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "Server API Key is missing. Set GEMINI_API_KEY environment variable in Netlify."})
+        }
+
+    try:
+        # 2. Input Validation (Parsing the JSON body from the event)
+        if event.get('body'):
+            data = json.loads(event['body'])
+            user_prompt = data.get('prompt')
+        else:
+            return {
+                "statusCode": 400, 
+                "body": json.dumps({"error": "Missing prompt in request data."})
+            }
+
+        # 3. Construct Gemini Payload
+        payload = {
+            "contents": [{"parts": [{"text": user_prompt}]}],
+            "tools": [{"google_search": {} }], # Enable Google Search
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": RESPONSE_SCHEMA
+            }
+        }
+
+        # 4. Call Gemini API
+        response = requests.post(
+            API_URL, 
+            headers={'Content-Type': 'application/json'}, 
+            data=json.dumps(payload),
+            timeout=30
+        )
+        response.raise_for_status() 
+        
+        # 5. Extract and Process Response
+        result = response.json()
+        candidate = result.get('candidates', [{}])[0]
+
+        if not candidate:
+            return {"statusCode": 500, "body": json.dumps({"error": "Gemini API returned an empty candidate list."})}
+
+        json_text = candidate.get('content', {}).get('parts', [{}])[0].get('text')
+        grounding_metadata = candidate.get('groundingMetadata', {})
+        
+        if not json_text:
+            return {"statusCode": 500, "body": json.dumps({"error": "Gemini API failed to return structured JSON content."})}
+        
+        research_data = json.loads(json_text)
+
+        # Extract citations/sources
+        sources = []
+        if grounding_metadata and grounding_metadata.get('groundingAttributions'):
+            for attribution in grounding_metadata['groundingAttributions']:
+                web = attribution.get('web')
+                if web and web.get('uri'):
+                    sources.append({
+                        "uri": web['uri'],
+                        "title": web.get('title', 'No Title Available')
+                    })
+
+        # 6. Return the consolidated data to the frontend
+        return {
+            "statusCode": 200,
+            "headers": { 'Content-Type': 'application/json' },
+            "body": json.dumps({
+                "research": research_data,
+                "sources": sources
+            })
+        }
+
+    except Exception as e:
+        return {"statusCode": 500, "body": json.dumps({"error": f"An unexpected server error occurred: {str(e)}", "details": str(e)})}
+```eof
+
+Once you create these files with this structure and push them to GitHub, Netlify will be able to successfully deploy both your static frontend and your secure Python serverless function!
+
+Would you like a brief reminder on how to set the **GEMINI\_API\_KEY** environment variable in the Netlify dashboard before you deploy?
